@@ -1,0 +1,71 @@
+#include <stdlib.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <math.h>
+#include <time.h>
+#include "mailbox.h"
+#include "gpu_fft.h"
+#include "csvparser.h"
+
+
+char Usage[] =
+        "Usage: hello_fft.bin log2_N [jobs [loops]]\n"
+                "log2_N = log2(FFT_length),       log2_N = 8...22\n"
+                "jobs   = transforms per batch,   jobs>0,        default 1\n"
+                "loops  = number of test repeats, loops>0,       default 1\n";
+
+unsigned Microseconds(void) {
+     struct timespec ts;
+     clock_gettime(CLOCK_REALTIME, &ts);
+     return ts.tv_sec*1000000 + ts.tv_nsec/1000;
+}
+
+int main(int argc, char *argv[]) {
+     unsigned t[2];
+     struct GPU_FFT_COMPLEX *dataIn,*dataOut;
+     struct GPU_FFT *fftinfo;
+
+     int mb = mbox_open();
+     gpu_fft_prepare(mb,12,GPU_FFT_FWD,1,&fftinfo);
+     printf("Step: %d\n",fftinfo->step);
+
+     dataIn = fftinfo->in;
+     dataOut = fftinfo->out;
+
+
+
+    int i =  0;
+    CsvParser *csvparser = CsvParser_new("outputShort.csv", ",", 0);
+    CsvRow *row;
+
+    int numberOfRows = 0;
+    while ((row = CsvParser_getRow(csvparser)) ) {
+        const char **rowFields = CsvParser_getFields(row);
+        for (i = 0 ; i < CsvParser_getNumFields(row) ; i++) {
+	    int num = atoi(rowFields[i]);
+	    dataIn[numberOfRows].re = num;
+	    dataIn[numberOfRows].im = 0;
+
+//            printf("%d\n", num);
+        }
+        numberOfRows++;
+        CsvParser_destroy_row(row);
+    }
+    CsvParser_destroy(csvparser);
+    printf("Rows: %d\n",numberOfRows);
+
+     usleep(1); // Yield to OS
+     t[0] = Microseconds();
+     gpu_fft_execute(fftinfo); // call one or many times
+     t[1] = Microseconds();
+
+     printf("usecs = %d\n", (t[1]-t[0]));
+     FILE *f = fopen("outputFFT.csv","w");
+     for (i = 0; i < 4096; i++) {
+	fprintf(f,"%.6f + %.6fi,\n",dataOut[i].re, dataOut[i].im);
+     }
+    fclose(f);
+
+     gpu_fft_release(fftinfo); // Videocore memory lost if not freed !
+     return 0;
+}
